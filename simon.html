@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Simon</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: white;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+
+  body {
+    display: grid;
+    place-items: center;
+  }
+
+  .wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+  }
+
+  #simon {
+    width: min(78vmin, 560px);
+    aspect-ratio: 1;
+    background: #111;
+    border-radius: 50%;
+    position: relative;
+    box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    padding: 4.5%;
+  }
+
+  .grid {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 4%;
+    background: #111;
+  }
+
+  .pad {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
+    transition: filter .08s, transform .08s;
+    touch-action: manipulation;
+  }
+
+  .pad:active { transform: scale(.985); }
+
+  #green  { background: #1fa34a; border-radius: 100% 0 0 0; }
+  #red    { background: #d8342a; border-radius: 0 100% 0 0; }
+  #yellow { background: #f2c230; border-radius: 0 0 0 100%; }
+  #blue   { background: #2874d0; border-radius: 0 0 100% 0; }
+
+  .pad.lit {
+    filter: brightness(1.75) saturate(1.15);
+  }
+
+  .center {
+    position: absolute;
+    width: 34%;
+    aspect-ratio: 1;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: #111;
+    display: grid;
+    place-items: center;
+    z-index: 2;
+  }
+
+  #start {
+    width: 72%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 3px solid #444;
+    background: #111;
+    color: white;
+    font: 700 clamp(13px, 2.5vmin, 24px)/1 system-ui, sans-serif;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  #start:hover { background: #1b1b1b; }
+  #start:active { transform: scale(.97); }
+
+  #status {
+    min-height: 1.5em;
+    font-size: clamp(16px, 2.5vmin, 22px);
+    font-weight: 650;
+    color: #222;
+    text-align: center;
+  }
+
+  @media (max-height: 650px) {
+    .wrap { gap: 10px; }
+    #simon { width: min(82vmin, 470px); }
+  }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <div id="simon" aria-label="Simon game">
+      <div class="grid">
+        <button class="pad" id="green"  aria-label="Green"></button>
+        <button class="pad" id="red"    aria-label="Red"></button>
+        <button class="pad" id="yellow" aria-label="Yellow"></button>
+        <button class="pad" id="blue"   aria-label="Blue"></button>
+      </div>
+      <div class="center">
+        <button id="start">START</button>
+      </div>
+    </div>
+    <div id="status">Press Start</div>
+  </main>
+
+<script>
+(() => {
+  const names = ["green", "red", "yellow", "blue"];
+  const freqs = {
+    green: 329.63,
+    red: 261.63,
+    yellow: 220.00,
+    blue: 164.81
+  };
+
+  const pads = Object.fromEntries(names.map(n => [n, document.getElementById(n)]));
+  const startBtn = document.getElementById("start");
+  const status = document.getElementById("status");
+
+  let audioCtx = null;
+  let pattern = [];
+  let userIndex = 0;
+  let acceptingInput = false;
+  let playingSequence = false;
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+
+  function tone(name, duration = 260) {
+    ensureAudio();
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.value = freqs[name];
+
+    const now = audioCtx.currentTime;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration / 1000);
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.start(now);
+    osc.stop(now + duration / 1000 + 0.03);
+  }
+
+  function flash(name, duration = 280) {
+    const pad = pads[name];
+    pad.classList.add("lit");
+    tone(name, duration - 20);
+    setTimeout(() => pad.classList.remove("lit"), duration);
+  }
+
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function playPattern() {
+    acceptingInput = false;
+    playingSequence = true;
+    status.textContent = `Watch • ${pattern.length}`;
+
+    await wait(450);
+
+    for (const name of pattern) {
+      flash(name, 330);
+      await wait(500);
+    }
+
+    userIndex = 0;
+    acceptingInput = true;
+    playingSequence = false;
+    status.textContent = "Your turn";
+  }
+
+  async function nextRound() {
+    pattern.push(names[Math.floor(Math.random() * names.length)]);
+    await playPattern();
+  }
+
+  async function startGame() {
+    ensureAudio();
+    pattern = [];
+    userIndex = 0;
+    acceptingInput = false;
+    status.textContent = "Ready";
+    await wait(250);
+    nextRound();
+  }
+
+  function wrong() {
+    acceptingInput = false;
+    status.textContent = `Oops — made it to ${Math.max(0, pattern.length - 1)}`;
+    startBtn.textContent = "AGAIN";
+  }
+
+  async function handlePad(name) {
+    if (!acceptingInput || playingSequence) return;
+
+    flash(name, 220);
+
+    if (name !== pattern[userIndex]) {
+      wrong();
+      return;
+    }
+
+    userIndex++;
+
+    if (userIndex === pattern.length) {
+      acceptingInput = false;
+      status.textContent = "Nice!";
+      await wait(650);
+      nextRound();
+    }
+  }
+
+  names.forEach(name => {
+    pads[name].addEventListener("pointerdown", () => handlePad(name));
+  });
+
+  startBtn.addEventListener("click", startGame);
+
+  // Optional keyboard controls:
+  // 1 = green, 2 = red, 3 = yellow, 4 = blue, Space = start/restart
+  document.addEventListener("keydown", e => {
+    if (e.repeat) return;
+    const keyMap = { "1":"green", "2":"red", "3":"yellow", "4":"blue" };
+    if (keyMap[e.key]) handlePad(keyMap[e.key]);
+    if (e.code === "Space") {
+      e.preventDefault();
+      startGame();
+    }
+  });
+})();
+</script>
+</body>
+</html>
